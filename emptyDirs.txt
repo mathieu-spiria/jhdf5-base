@@ -1,2 +1,3 @@
 ./source/java/ch/systemsx/cisd/base/exceptions/namedthread
 ./source/java/ch/systemsx/cisd/base/exceptions/utilities
+./sourceTest/java
