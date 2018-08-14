@@ -53,10 +53,6 @@ buildscript {
     apply from: './repository.gradle'
     
     repositories repositoryConfig
-    
-    dependencies {
-        classpath 'cisd:cisd-ant-tasks:+'
-    }
 }
 
 repositories repositoryConfig
