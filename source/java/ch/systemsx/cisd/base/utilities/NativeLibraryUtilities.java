@@ -22,6 +22,7 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.io.RandomAccessFile;
 import java.net.URI;
+import java.net.URL;
 import java.nio.file.Files;
 import java.nio.file.NoSuchFileException;
 import java.nio.file.Path;
@@ -32,8 +33,6 @@ import java.util.LinkedList;
 import java.util.zip.CRC32;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipFile;
-
-import ch.systemsx.cisd.base.exceptions.CheckedExceptionTunnel;
 
 /**
  * A utility class for loading native shared libraries (following the JNI specification). A native shared library is identified by a name. The process
@@ -166,7 +165,7 @@ public final class NativeLibraryUtilities
             if (linkLibNameOrNull != null)
             {
                 final Path libraryPath = toRealPath(linkLibNameOrNull, verbose);
-                checkPerformUpdate(libraryName, libraryPath, verbose);
+                tryCheckPerformUpdate(libraryName, libraryPath, verbose);
                 return loadLib(libraryName, libraryPath, verbose);
             }
 
@@ -176,12 +175,12 @@ public final class NativeLibraryUtilities
             {
                 linkLibNameOrNull = getLibPath(linkLibPathOrNull, libraryName);
                 final Path libraryPath = toRealPath(linkLibNameOrNull, verbose);
-                checkPerformUpdate(libraryName, libraryPath, verbose);
+                tryCheckPerformUpdate(libraryName, libraryPath, verbose);
                 return loadLib(libraryName, libraryPath, verbose);
             }
 
             // Try to resource to a temp file.
-            linkLibNameOrNull = tryCopyNativeLibraryToTempFile(libraryName);
+            linkLibNameOrNull = tryCopyNativeLibraryToTempFile(libraryName, verbose);
             if (linkLibNameOrNull != null)
             {
                 return loadLib(libraryName, toRealPath(linkLibNameOrNull, verbose), verbose);
@@ -191,7 +190,12 @@ public final class NativeLibraryUtilities
             return loadSystemLibrary(libraryName);
         } catch (Exception e)
         {
-            throw CheckedExceptionTunnel.wrapIfNecessary(e);
+            if (verbose)
+            {
+                System.err.printf("[native.libpath] FAILURE to load native library '%s'.\n", libraryName);
+                e.printStackTrace();
+            }
+            return false;
         }
     }
 
@@ -240,6 +244,23 @@ public final class NativeLibraryUtilities
         }
     }
 
+    private static boolean tryCheckPerformUpdate(String libraryName, Path linkLibPath, boolean verbose)
+    {
+        try
+        {
+            checkPerformUpdate(libraryName, linkLibPath, verbose);
+            return true;
+        } catch (Exception ex)
+        {
+            if (verbose)
+            {
+                System.err.printf("[native.libpath] FAILURE trying to check on whether to perform an update on library '%s' (path '%s').\n", libraryName, linkLibPath);
+                ex.printStackTrace();
+            }
+            return false;
+        }
+    }
+
     private static void checkPerformUpdate(String libraryName, Path linkLibPath, boolean verbose) throws Exception
     {
         final boolean exists = Files.exists(linkLibPath);
@@ -267,10 +288,11 @@ public final class NativeLibraryUtilities
 
     private static boolean needsUpdate(String libName, String libPathInJarfile, Path linkLibPath, boolean verbose) throws Exception
     {
-        final URI uri = ResourceUtilities.class.getResource(libPathInJarfile).toURI();
+        final URL url = ResourceUtilities.class.getResource(libPathInJarfile);
+        final URI uri = (url != null) ? url.toURI() : null;
         if (uri == null)
         {
-            throw new IllegalArgumentException(libPathInJarfile + " does not resolve to an URI.");
+            throw new IllegalArgumentException("Resource '" + libPathInJarfile + "' cannot be resolved to an URI.");
         }
         final String[] array = uri.toString().split("!");
         if (array.length == 2)
@@ -323,11 +345,11 @@ public final class NativeLibraryUtilities
             System.err.printf("[native.libpath] Updating library '%s': refresh file '%s' from jar resource '%s'.\n", libName, linkLibPath,
                     libPathInJarfile);
         }
-        try (final RandomAccessFile raf = new RandomAccessFile(linkLibPath.toFile(), "rw"))
+        try (final RandomAccessFile randomAccessFile = new RandomAccessFile(linkLibPath.toFile(), "rw"))
         {
             // Get an exclusive lock so we are not interfering with other processes trying to do the same.
-            raf.getChannel().lock(0, 1, false);
-            ResourceUtilities.copyResourceToFile(libPathInJarfile, linkLibPath);
+            randomAccessFile.getChannel().lock(0, 1, false);
+            ResourceUtilities.tryCopyResourceToFile(libPathInJarfile, linkLibPath, randomAccessFile, verbose, "[native.libpath] ");
         }
     }
 
@@ -363,10 +385,10 @@ public final class NativeLibraryUtilities
             final String linkLibNameAbsolute = linkLib.getAbsolutePath();
             try
             {
-                try (final RandomAccessFile raf = new RandomAccessFile(linkLib, "r"))
+                try (final RandomAccessFile randomAccessFile = new RandomAccessFile(linkLib, "r"))
                 {
                     // Get a shared lock so other processes do not interfere with us when they try to write to this file.
-                    raf.getChannel().lock(0, 1, true);
+                    randomAccessFile.getChannel().lock(0, 1, true);
                     System.load(linkLibNameAbsolute);
                     return true;
                 }
@@ -374,7 +396,7 @@ public final class NativeLibraryUtilities
             {
                 if (verbose)
                 {
-                    System.err.printf("[native.libpath] Native library '%s' failed to load:\n", linkLibNameAbsolute);
+                    System.err.printf("[native.libpath] FAILURE loading native library '%s'.\n", linkLibNameAbsolute);
                     err.printStackTrace();
                 }
                 return false;
@@ -383,7 +405,7 @@ public final class NativeLibraryUtilities
         {
             if (verbose)
             {
-                System.err.printf("[native.libpath] Native library '%s' does not exist or is not readable.\n", linkLib
+                System.err.printf("[native.libpath] FAILURE as native library '%s' does not exist or is not readable.\n", linkLib
                         .getAbsolutePath());
             }
             return false;
@@ -410,14 +432,15 @@ public final class NativeLibraryUtilities
      * {@code /native/<libraryName>/<platform_id>/<libraryName>.so}.
      * 
      * @param libraryName The name of the library.
+     * @param verbose If <code>true</code>, print error to <code>stderr</code> if copying fails.
      * @return The name of the temporary file, or <code>null</code>, if the resource could not be copied.
      */
-    public static String tryCopyNativeLibraryToTempFile(final String libraryName)
+    public static String tryCopyNativeLibraryToTempFile(final String libraryName, final boolean verbose)
     {
         // Request clean-up of old native library temp files as under Windows the files are locked and
         // cannot be deleted on regular shutdown.
         return ResourceUtilities.tryCopyResourceToTempFile(getLibPath("/native", libraryName),
-                libraryName, ".so", true);
+                libraryName, ".so", true, verbose, "[native.libpath] ");
     }
 
     private static String getLibPath(final String prefix, final String libraryName)
