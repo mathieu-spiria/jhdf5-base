@@ -180,7 +180,7 @@ public class ResourceUtilities
      *
      * <i>This is the method from commons-io IOUtil as that one is deprecated.<i>
      *
-     * @param output the OutputStream to close, may be null or already closed
+     * @param closeable the OutputStream to close, may be null or already closed
      */
     public static void closeQuietly(final Closeable closeable) 
     {
