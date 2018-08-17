@@ -23,6 +23,7 @@ import java.io.FilenameFilter;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
+import java.nio.file.Path;
 
 import org.apache.commons.io.IOUtils;
 import org.apache.commons.io.filefilter.WildcardFileFilter;
@@ -44,8 +45,7 @@ public class ResourceUtilities
      * @param resource The name of the resource to copy.
      * @param prefix The prefix to use for the temporary name.
      * @param postfix The postfix to use for the temporary name.
-     * @return The name of the temporary file, or <code>null</code>, if the resource could not be
-     *         copied.
+     * @return The name of the temporary file, or <code>null</code>, if the resource could not be copied.
      */
     public static String tryCopyResourceToTempFile(final String resource, final String prefix,
             final String postfix)
@@ -60,31 +60,30 @@ public class ResourceUtilities
     }
 
     /**
-     * Tries to copy the resource with the given name to a temporary file.
+     * Tries to copy the resource with the given name to a temporary file. The file will be deleted on program exit.
      * 
      * @param resource The name of the resource to copy.
      * @param prefix The prefix to use for the temporary name.
      * @param postfix The postfix to use for the temporary name.
-     * @param cleanUpOldResources If <code>true</code>, remove old leftover temporary files for this
-     *            <var>prefix</var> and <var>postfix</var>.
-     * @return The name of the temporary file, or <code>null</code>, if the resource could not be
-     *         copied.
+     * @param cleanUpOldResources If <code>true</code>, remove old leftover temporary files for this <var>prefix</var> and <var>postfix</var>.
+     * @return The name of the temporary file, or <code>null</code>, if the resource could not be copied.
      */
     public static String tryCopyResourceToTempFile(final String resource, final String prefix,
             final String postfix, final boolean cleanUpOldResources)
     {
         try
         {
-            return copyResourceToTempFile(resource, prefix, postfix, cleanUpOldResources);
+            return copyResourceToFileImpl(resource, null, prefix, postfix, cleanUpOldResources);
         } catch (final Exception ex)
         {
+            System.err.printf("Failed to copy resource '%s' to temporary file.\n", resource);
+            ex.printStackTrace();
             return null;
         }
     }
 
     /**
-     * Copies the resource with the given name to a temporary file. The file will be deleted on
-     * program exit.
+     * Copies the resource with the given name to a temporary file. The file will be deleted on program exit.
      * 
      * @param resource The name of the resource to copy.
      * @param prefix The prefix to use for the temporary name.
@@ -96,54 +95,70 @@ public class ResourceUtilities
     public static String copyResourceToTempFile(final String resource, final String prefix,
             final String postfix) throws IOExceptionUnchecked
     {
-        return copyResourceToTempFile(resource, prefix, postfix, false);
+        return copyResourceToFileImpl(resource, null, prefix, postfix, false);
     }
 
     /**
-     * Copies the resource with the given name to a temporary file. The file will be deleted on
-     * program exit.
+     * Copies the resource with the given name to a temporary file. The file will be deleted on program exit.
      * 
      * @param resource The name of the resource to copy.
      * @param prefix The prefix to use for the temporary name.
      * @param postfix The postfix to use for the temporary name.
-     * @param cleanUpOldResources If <code>true</code>, remove old leftover temporary files for this
-     *            <var>prefix</var> and <var>postfix</var>.
+     * @param cleanUpOldResources If <code>true</code>, remove old leftover temporary files for this <var>prefix</var> and <var>postfix</var>.
      * @return The name of the temporary file.
      * @throws IllegalArgumentException If the resource cannot be found in the class path.
      * @throws IOExceptionUnchecked If an {@link IOException} occurs.
      */
-    public static String copyResourceToTempFile(final String resource, final String prefix,
+    public static String copyResourceToTempFile(final String resource, final Path destinationOrNull, final String prefix,
+            final String postfix, final boolean cleanUpOldResources) throws IOExceptionUnchecked
+    {
+        return copyResourceToFileImpl(resource, null, prefix, postfix, cleanUpOldResources);
+    }
+
+    /**
+     * Copies the resource with the given name to a file on the file system..
+     * 
+     * @param resource The name of the resource to copy.
+     * @param destination The destination path for the resource content.
+     * @throws IllegalArgumentException If the resource cannot be found in the class path.
+     * @throws IOExceptionUnchecked If an {@link IOException} occurs.
+     */
+    public static void copyResourceToFile(final String resource, final Path destination) throws IOExceptionUnchecked
+    {
+        copyResourceToFileImpl(resource, destination, null, null, false);
+    }
+
+    private static String copyResourceToFileImpl(final String resource, final Path destinationOrNull, final String prefix,
             final String postfix, final boolean cleanUpOldResources) throws IOExceptionUnchecked
     {
         if (cleanUpOldResources)
         {
             deleteOldResourceTempFiles(prefix, postfix);
         }
-        final InputStream resourceStream = ResourceUtilities.class.getResourceAsStream(resource);
-        if (resourceStream == null)
-        {
-            throw new IllegalArgumentException("Resource '" + resource + "' not found.");
-        }
         try
         {
-            final File tempFile = File.createTempFile(prefix, postfix);
-            tempFile.deleteOnExit();
-            final OutputStream fileStream = new FileOutputStream(tempFile);
-            try
+            try (final InputStream resourceStream = ResourceUtilities.class.getResourceAsStream(resource))
             {
-                IOUtils.copy(resourceStream, fileStream);
-                fileStream.close();
-            } finally
-            {
-                closeQuietly(fileStream);
+                if (resourceStream == null)
+                {
+                    throw new IllegalArgumentException("Resource '" + resource + "' not found.");
+                }
+                final boolean createTmpFile = destinationOrNull == null;
+                final File file = createTmpFile ? File.createTempFile(prefix, postfix) : destinationOrNull.toFile();
+                if (createTmpFile)
+                {
+                    file.deleteOnExit();
+                }
+                try (final OutputStream fileStream = new FileOutputStream(file))
+                {
+                    IOUtils.copy(resourceStream, fileStream);
+                    fileStream.close();
+                }
+                return file.getAbsolutePath();
             }
-            return tempFile.getAbsolutePath();
         } catch (final IOException ex)
         {
             throw CheckedExceptionTunnel.wrapIfNecessary(ex);
-        } finally
-        {
-            closeQuietly(resourceStream);
         }
     }
 
@@ -159,21 +174,24 @@ public class ResourceUtilities
     /**
      * Closes an <code>OutputStream</code> unconditionally.
      * <p>
-     * Equivalent to {@link OutputStream#close()}, except any exceptions will be ignored.
-     * This is typically used in finally blocks.
+     * Equivalent to {@link OutputStream#close()}, except any exceptions will be ignored. This is typically used in finally blocks.
      * <p>
      * Example code:
+     * 
      * <pre>
      * byte[] data = "Hello, World".getBytes();
      *
      * OutputStream out = null;
-     * try {
+     * try
+     * {
      *     out = new FileOutputStream("foo.txt");
      *     out.write(data);
-     *     out.close(); //close errors are handled
-     * } catch (IOException e) {
+     *     out.close(); // close errors are handled
+     * } catch (IOException e)
+     * {
      *     // error handling
-     * } finally {
+     * } finally
+     * {
      *     IOUtils.closeQuietly(out);
      * }
      * </pre>
@@ -182,14 +200,16 @@ public class ResourceUtilities
      *
      * @param closeable the OutputStream to close, may be null or already closed
      */
-    public static void closeQuietly(final Closeable closeable) 
+    public static void closeQuietly(final Closeable closeable)
     {
-        try 
+        try
         {
-            if (closeable != null) {
+            if (closeable != null)
+            {
                 closeable.close();
             }
-        } catch (final IOException ioe) {
+        } catch (final IOException ioe)
+        {
             // ignore
         }
     }
