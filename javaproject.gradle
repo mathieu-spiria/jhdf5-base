@@ -112,7 +112,7 @@ def calculateBuildInfo() {
         def rev = gitlogoutput[0].split("-")
         project.ext.revisionNumber = Integer.parseInt(rev[0])
         def commitHash = rev[1]
-        def date = new java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss").format(new Date(revisionNumber * 1000L))
+        def date = new java.text.SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ssX").format(new Date(revisionNumber * 1000L))
         project.ext.revisionInfo = "${commitHash} [${date}]"
         def tag = 'git tag -l --points-at HEAD'.execute().text.trim()
         if (tag == null || tag.isEmpty()) {
