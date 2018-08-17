@@ -23,7 +23,7 @@ import ch.systemsx.cisd.base.exceptions.IOExceptionUnchecked;
  *
  * @author Bernd Rinn
  */
-public interface IInputStream
+public interface IInputStream extends AutoCloseable
 {
 
     /**

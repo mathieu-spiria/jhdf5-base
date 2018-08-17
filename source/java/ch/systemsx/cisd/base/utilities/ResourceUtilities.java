@@ -16,6 +16,7 @@
 
 package ch.systemsx.cisd.base.utilities;
 
+import java.io.Closeable;
 import java.io.File;
 import java.io.FileOutputStream;
 import java.io.FilenameFilter;
@@ -134,7 +135,7 @@ public class ResourceUtilities
                 fileStream.close();
             } finally
             {
-                IOUtils.closeQuietly(fileStream);
+                closeQuietly(fileStream);
             }
             return tempFile.getAbsolutePath();
         } catch (final IOException ex)
@@ -142,7 +143,7 @@ public class ResourceUtilities
             throw CheckedExceptionTunnel.wrapIfNecessary(ex);
         } finally
         {
-            IOUtils.closeQuietly(resourceStream);
+            closeQuietly(resourceStream);
         }
     }
 
@@ -155,4 +156,41 @@ public class ResourceUtilities
         }
     }
 
+    /**
+     * Closes an <code>OutputStream</code> unconditionally.
+     * <p>
+     * Equivalent to {@link OutputStream#close()}, except any exceptions will be ignored.
+     * This is typically used in finally blocks.
+     * <p>
+     * Example code:
+     * <pre>
+     * byte[] data = "Hello, World".getBytes();
+     *
+     * OutputStream out = null;
+     * try {
+     *     out = new FileOutputStream("foo.txt");
+     *     out.write(data);
+     *     out.close(); //close errors are handled
+     * } catch (IOException e) {
+     *     // error handling
+     * } finally {
+     *     IOUtils.closeQuietly(out);
+     * }
+     * </pre>
+     *
+     * <i>This is the method from commons-io IOUtil as that one is deprecated.<i>
+     *
+     * @param output the OutputStream to close, may be null or already closed
+     */
+    public static void closeQuietly(final Closeable closeable) 
+    {
+        try 
+        {
+            if (closeable != null) {
+                closeable.close();
+            }
+        } catch (final IOException ioe) {
+            // ignore
+        }
+    }
 }

@@ -23,7 +23,7 @@ import ch.systemsx.cisd.base.exceptions.IOExceptionUnchecked;
  * 
  * @author Bernd Rinn
  */
-public interface IOutputStream extends ICloseable, ISynchronizable
+public interface IOutputStream extends AutoCloseable, ISynchronizable
 {
     /**
      * @see java.io.OutputStream#write(int)

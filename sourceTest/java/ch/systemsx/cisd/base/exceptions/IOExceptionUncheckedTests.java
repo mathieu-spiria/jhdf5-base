@@ -42,6 +42,7 @@ import ch.systemsx.cisd.base.exceptions.IOExceptionUnchecked;
  */
 public class IOExceptionUncheckedTests
 {
+    @SuppressWarnings("resource")
     private void generateFileNotFoundException() throws IOExceptionUnchecked
     {
         try

@@ -18,6 +18,7 @@ package ch.systemsx.cisd.base.io;
 
 import java.io.IOException;
 import java.nio.ByteOrder;
+import java.nio.charset.Charset;
 
 import org.apache.commons.io.IOUtils;
 import org.testng.annotations.Test;
@@ -178,7 +179,7 @@ public abstract class IRandomAccessFileTests extends AbstractFileSystemTestCase
         final IRandomAccessFile raf = createRandomAccessFile("testWriteReadStringChars", bytes);
         final AdapterIInputStreamToInputStream is = new AdapterIInputStreamToInputStream(raf);
 
-        assertEquals("[hello world]", IOUtils.readLines(is).toString());
+        assertEquals("[hello world]", IOUtils.readLines(is, Charset.defaultCharset()).toString());
         raf.close();
     }
 

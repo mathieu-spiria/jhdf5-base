@@ -19,8 +19,8 @@ package ch.systemsx.cisd.base.mdarray;
 import java.io.Serializable;
 import java.util.Iterator;
 
-import org.apache.commons.lang.ArrayUtils;
-import org.apache.commons.lang.ClassUtils;
+import org.apache.commons.lang3.ArrayUtils;
+import org.apache.commons.lang3.ClassUtils;
 
 /**
  * Base class of a multi-dimensional array. The <var>dimensions</var> of an array are provided

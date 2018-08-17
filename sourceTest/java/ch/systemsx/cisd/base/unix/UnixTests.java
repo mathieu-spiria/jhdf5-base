@@ -20,6 +20,7 @@ import java.io.File;
 import java.io.IOException;
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
+import java.nio.charset.Charset;
 
 import org.apache.commons.io.FileUtils;
 import org.testng.annotations.Test;
@@ -47,7 +48,7 @@ public class UnixTests extends AbstractFileSystemTestCase
         final short accessMode = (short) 0777;
         final String content = "someText\n";
         final File f = new File(workingDirectory, "someFile");
-        FileUtils.writeStringToFile(f, content);
+        FileUtils.writeStringToFile(f, content, Charset.defaultCharset());
         Unix.setAccessMode(f.getAbsolutePath(), accessMode);
         final Stat info = Unix.getLinkInfo(f.getAbsolutePath());
         Unix.setOwner(f.getAbsolutePath(), info.getUid(), info.getGid());
@@ -85,7 +86,7 @@ public class UnixTests extends AbstractFileSystemTestCase
     {
         final File f = new File(workingDirectory, "someOtherFile");
         final String content = "someMoreText\n";
-        FileUtils.writeStringToFile(f, content);
+        FileUtils.writeStringToFile(f, content, Charset.defaultCharset());
         final File s = new File(workingDirectory, "someLink");
         Unix.createSymbolicLink(f.getAbsolutePath(), s.getAbsolutePath());
         final Stat info = Unix.getLinkInfo(s.getAbsolutePath());

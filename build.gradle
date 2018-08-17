@@ -4,7 +4,7 @@ group='sis'
 
 dependencies {
     compile 'apache:commons-io:+',
-            'apache:commons-lang:+',
+            'apache:commons-lang3:+',
             'testng:testng:+',
             'rinn:restrictions:+'
 } 
