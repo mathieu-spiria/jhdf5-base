@@ -22,7 +22,6 @@ import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.StringTokenizer;
 
 /**
  * Abstract of all classes providing build and environment information.
@@ -62,10 +61,28 @@ public abstract class AbstractBuildAndEnvironmentInfo
                 final String line = reader.readLine();
                 if (line != null)
                 {
-                    final StringTokenizer tokenizer = new StringTokenizer(line, ":");
-                    extractedVersion = tokenizer.nextToken();
-                    extractedRevision = tokenizer.nextToken();
-                    extractedCleanFlag = "clean".equals(tokenizer.nextToken());
+                    final String[] rev = line.split("::");
+                    if (rev.length == 3)
+                    {
+                        extractedVersion = rev[0];
+                        extractedRevision = rev[1];
+                        extractedCleanFlag = "clean".equals(rev[2]);
+                    } else
+                    {
+                        // Backward compatibility: test for the old format.
+                        final String[] rev2 = line.split(":");
+                        if (rev2.length == 3)
+                        {
+                            extractedVersion = rev2[0];
+                            extractedRevision = rev2[1];
+                            extractedCleanFlag = "clean".equals(rev2[2]);
+                        } else
+                        {
+                            extractedVersion = line;
+                            extractedRevision = "?";
+                            extractedCleanFlag = false;
+                        }
+                    }
                 }
             } catch (IOException ex)
             {
@@ -173,7 +190,7 @@ public abstract class AbstractBuildAndEnvironmentInfo
         builder.append(getVersion());
         if (isUnknown(rev) == false)
         {
-            builder.append(" (r").append(rev);
+            builder.append(" (").append(rev);
             if (isDirty)
             {
                 builder.append("*");

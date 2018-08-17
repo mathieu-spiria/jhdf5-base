@@ -89,34 +89,12 @@ def execute_working_dir(command, arguments, working_dir) {
     }
 }
 
-ext.svnCommand = 'svn'
-
-def isSvnProject() {
-   return new java.io.File(projectDir, ".svn").isDirectory() || new java.io.File(projectDir, "../.svn").isDirectory() 
-}
-
 def isGitProject() {
    return new java.io.File(projectDir, ".git").isDirectory() || new java.io.File(projectDir, "../.git").isDirectory() 
 }
 
-def executeSVN(arguments) {
-    arguments.add(0, '--non-interactive')
-    return execute(svnCommand, arguments)
-}
-
 def calculateCleanFlag() {
-    return 'clean'
-    for (childProject in project.childProjects.values()) {
-        if (childProject.cleanFlag == 'dirty') {
-            return 'dirty'
-        }
-    }
-    def isSvn = isSvnProject()
-    if (isSvn) {
-        def output = executeSVN(['status', '../' + project.name])
-        def lines = output.findAll({ (it.startsWith('?') || it.trim().isEmpty()) == false})
-        return lines.isEmpty() ? 'clean' : 'dirty'
-    } else if (isGitProject()) {
+    if (isGitProject()) {
         def output = execute_working_dir('git', ['status', '--porcelain'], '../' + project.name)
         return output.length == 0 ? 'clean' : 'dirty'
     } else {
@@ -129,23 +107,13 @@ def findMaximum(lines, key) {
 }
 
 def calculateBuildInfo() {
-    if (isSvnProject()) {
-        def output = executeSVN(['info', '-R', '../' + project.name])
-        def maxRevisionNumber = findMaximum(output, 'Revision:')
-        project.ext.revisionNumber = findMaximum(output, 'Last Changed Rev:')
-        if (maxRevisionNumber < project.ext.revisionNumber) {
-            throw new GradleException("Maximum revision ($maxRevisionNumber) is less than the maximum "
-                      + "last changed revision ($project.ext.revisionNumber).")
-        }
-        project.ext.versionNumber = 'SNAPSHOT'
-        def url = output.findAll({ it.startsWith('URL:')})[0].split('URL:')[1].trim()
-        if (url.contains('/trunk') == false) {
-            def pathElements = url.split('/')
-            project.ext.versionNumber = 'libraries' == pathElements[-2] ? pathElements[-3] : pathElements[-2]
-        }
-    } else if (isGitProject()) {
-        def gitlogoutput = execute_working_dir('git', ['log', '-1', '--format=%at'], '../' + project.name)
-        project.ext.revisionNumber = Integer.parseInt(gitlogoutput[0])
+    if (isGitProject()) {
+        def gitlogoutput = execute_working_dir('git', ['log', '-1', '--format=%at-%H'], '../' + project.name)
+        def rev = gitlogoutput[0].split("-")
+        project.ext.revisionNumber = Integer.parseInt(rev[0])
+        def commitHash = rev[1]
+        def date = new java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss").format(new Date(revisionNumber * 1000L))
+        project.ext.revisionInfo = "${commitHash} [${date}]"
         def tag = 'git tag -l --points-at HEAD'.execute().text.trim()
         if (tag == null || tag.isEmpty()) {
             project.ext.versionNumber = 'SNAPSHOT'
@@ -155,22 +123,15 @@ def calculateBuildInfo() {
            project.ext.versionNumber = tag
         }
     } else {
+        project.ext.revisionInfo = '?'
         project.ext.revisionNumber = 1
         project.ext.versionNumber = 'SNAPSHOT'
     }
 
-    for (childProject in project.childProjects.values()) {
-        project.ext.revisionNumber = Math.max(project.ext.revisionNumber, childProject.revisionNumber)
-        if (project.ext.versionNumber != childProject.versionNumber) {
-            throw new GradleException("Inconsistent version numbers: "
-                        + "${project.name} at version ${project.ext.versionNumber} but "
-                        + "${childProject.name} at version ${childProject.versionNumber}.") 
-        } 
-    }
-    version = "${project.ext.versionNumber}-r${project.ext.revisionNumber}"
-    project.ext.revisionForPublication = project.ext.versionNumber.startsWith('SNAPSHOT') ? "r${project.ext.revisionNumber}" : project.ext.versionNumber
+    version = project.ext.versionNumber.startsWith('SNAPSHOT') ? "${project.ext.revisionNumber}" : project.ext.versionNumber
+    project.ext.revisionForPublication = project.ext.versionNumber.startsWith('SNAPSHOT') ? "${project.ext.revisionNumber}" : project.ext.versionNumber
     project.ext.cleanFlag = calculateCleanFlag()
-    def buildInfo = "${project.ext.versionNumber}:${project.ext.revisionNumber}:${project.ext.cleanFlag}"
+    def buildInfo = "${project.ext.versionNumber}::${project.ext.revisionInfo}::${project.ext.cleanFlag}"
     println "BUILD INFO for $project: $buildInfo"
     def targetsDist = 'targets/dist'
     def distFolder = new File("${project.projectDir}/$targetsDist")
