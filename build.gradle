@@ -47,6 +47,10 @@ task standaloneTestJar(type: Jar, dependsOn: [classes, testClasses]) {
     from files(sourceSets.test.output.classesDir)
     from files("libs")
  
+    from('targets/dist') {
+        include 'BUILD*INFO'
+    }    
+
     from {configurations.testRuntime.collect {zipTree(it)}}
  
     manifest {
