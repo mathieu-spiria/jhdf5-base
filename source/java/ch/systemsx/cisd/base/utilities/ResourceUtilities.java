@@ -198,7 +198,11 @@ public class ResourceUtilities
                 try (final OutputStream fileStream =
                         (fileOrNull == null) ? Channels.newOutputStream(randomAccessFileOrNull.getChannel()) : new FileOutputStream(fileOrNull))
                 {
-                    IOUtils.copy(resourceStream, fileStream);
+                    final long numberBytesInStream = IOUtils.copyLarge(resourceStream, fileStream);
+                    if (randomAccessFileOrNull != null)
+                    {
+                        randomAccessFileOrNull.setLength(numberBytesInStream);
+                    }
                     fileStream.close();
                 }
                 return createTmpFile ? fileOrNull.getAbsolutePath() : null;
