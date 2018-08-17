@@ -1,5 +1,5 @@
 /*
- * Copyright 2010 ETH Zuerich, CISD
+ * Copyright 2007 - 2018 ETH Zuerich, CISD and SIS.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -53,6 +53,9 @@ public class AllTests
         if (Unix.isOperational())
         {
             UnixTests.main(args);
+        } else
+        {
+            System.err.println("No unix library found.");
         }
     }
 
