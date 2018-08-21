@@ -58,7 +58,7 @@ public class UnixTests extends AbstractFileSystemTestCase
         assertEquals("root", Unix.tryGetUserNameForUid(0));
         assertEquals(FileLinkType.REGULAR_FILE, info.getLinkType());
         assertFalse(info.isSymbolicLink());
-        assertEquals(f.lastModified(), 1000 * info.getLastModified());
+        assertEquals(f.lastModified()/1000, info.getLastModified());
     }
 
     @Test(groups =
