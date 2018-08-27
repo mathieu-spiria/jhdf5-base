@@ -1125,8 +1125,6 @@ public final class Unix
      * @param fileName The name of the file or link to change the timestamp of.
      * @param accessTimeSecs The new access time in seconds since start of the epoch.
      * @param modificationTimeSecs The new modification time in seconds since start of the epoch.
-     * @param followLink If set to <code>true</code>, set the time stamps of the link target, 
-     *          otherwise set the time stamps of the link. 
      */
     public static void setLinkTimestamps(String fileName,
             long accessTimeSecs, long modificationTimeSecs) throws IOExceptionUnchecked
@@ -1203,8 +1201,6 @@ public final class Unix
      * @param fileName The name of the file or link to change the timestamp of.
      * @param accessTime The new access time as {@link Time} object.
      * @param modificationTime The new modification time as {@link Time} object.
-     * @param followLink If set to <code>true</code>, set the time stamps of the link target, 
-     *          otherwise set the time stamps of the link. 
      */
     public static void setFileTimestamps(String fileName,
             Time accessTime, Time modificationTime) throws IOExceptionUnchecked
