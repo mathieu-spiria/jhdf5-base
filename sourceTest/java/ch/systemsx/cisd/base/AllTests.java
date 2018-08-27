@@ -24,6 +24,7 @@ import ch.systemsx.cisd.base.io.RandomAccessFileImplTests;
 import ch.systemsx.cisd.base.mdarray.MDArrayTests;
 import ch.systemsx.cisd.base.namedthread.NamingThreadPoolExecutorTest;
 import ch.systemsx.cisd.base.unix.Unix;
+import ch.systemsx.cisd.base.unix.UnixRootTests;
 import ch.systemsx.cisd.base.unix.UnixTests;
 
 /**
@@ -53,6 +54,7 @@ public class AllTests
         if (Unix.isOperational())
         {
             UnixTests.main(args);
+            UnixRootTests.main(args);
         } else
         {
             System.err.println("No unix library found.");

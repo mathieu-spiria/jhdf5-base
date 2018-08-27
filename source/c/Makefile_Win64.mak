@@ -6,13 +6,13 @@
 #============================================================================
 
 # Visual C++ directory, for example
-VCPPDIR=C:\Program Files (x86)\Microsoft Visual Studio 9.0\VC
+VCPPDIR=C:\Program Files (x86)\Microsoft Visual Studio\2017\Community\VC
 
 # Directory where JDK is installed (We require JDK 1.6)
-JAVADIR=C:\Program Files\Java\jdk1.6.0_37
+JAVADIR=C:\Program Files\Java\jdk1.8.0_181
 
 # Common parent directory
-PARENTDIR=C:\nativeData
+PARENTDIR=F:\base
 
 # Directory of the HDF Java Products, for example
 SRCDIR=$(PARENTDIR)\c\

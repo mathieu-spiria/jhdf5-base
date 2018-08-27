@@ -25,25 +25,44 @@ import ch.systemsx.cisd.base.exceptions.IOExceptionUnchecked;
 import ch.systemsx.cisd.base.utilities.NativeLibraryUtilities;
 
 /**
- * A utility class that provides access to common Unix system calls. Obviously, this will only work
- * on Unix platforms and it requires a native library to be loaded.
+ * A utility class that provides access to common Unix system calls. Obviously, this will only work on Unix platforms and it requires a native library
+ * to be loaded.
  * <p>
- * <i>Check with {@link #isOperational()} if this class is operational and only call the other
- * methods if <code>Unix.isOperational() == true</code>.</i>
+ * <i>Check with {@link #isOperational()} if this class is operational and only call the other methods if
+ * <code>Unix.isOperational() == true</code>.</i>
  * 
  * @author Bernd Rinn
  */
 public final class Unix
 {
 
+    /**
+     * Method how processes are detected on this host.
+     *
+     */
     private enum ProcessDetection
     {
-        PROCFS, PS, NONE
+        /**
+         * Process detection via <code>procfs</code> (Linux only).
+         */
+        PROCFS,
+        
+        /**
+         * Process detection via the command line tool <code>ps</code>.
+         */
+        PS,
+        
+        /**
+         * No working process detection found. 
+         */
+        NONE
     }
 
     private final static boolean operational;
-
+    
     private final static ProcessDetection processDetection;
+
+    private static volatile boolean useUnixRealtimeTimer = false;
 
     static
     {
@@ -66,6 +85,7 @@ public final class Unix
         {
             processDetection = ProcessDetection.NONE;
         }
+        useUnixRealtimeTimer = Boolean.getBoolean("unix.realtime.timer");
     }
 
     /** set user ID on execution */
@@ -105,6 +125,103 @@ public final class Unix
     public static final short S_IXOTH = 00001;
 
     /**
+     * A class to represent a Unix <code>struct timespec</code> that holds a system time in nano-second resolution. 
+     */
+    public static final class Time
+    {
+        private final long secs;
+        
+        private final long nanos;
+
+        private Time(long secs, long nanos)
+        {
+            this.secs = secs;
+            this.nanos = nanos;
+        }
+
+        public long getSecs()
+        {
+            return secs;
+        }
+
+        public long getNanoSecPart()
+        {
+            return nanos;
+        }
+
+        public long getMicroSecPart()
+        {
+            if (nanos % 1000 >= 500)
+            {
+                return nanos / 1_000 + 1;
+            } else
+            {
+                return nanos / 1_000;
+            }
+        }
+
+        public long getMilliSecPart()
+        {
+            if (nanos % 1000000 >= 500000)
+            {
+                return nanos / 1_000_000 + 1;
+            } else
+            {
+                return nanos / 1_000_000;
+            }
+        }
+        
+        public long getMillis()
+        {
+            return secs * 1_000 + getMilliSecPart();
+        }
+
+        @Override
+        public String toString()
+        {
+            return "Time [secs=" + secs + ", nanos=" + nanos + "]";
+        }
+
+        @Override
+        public int hashCode()
+        {
+            final int prime = 31;
+            int result = 1;
+            result = prime * result + (int) (nanos ^ (nanos >>> 32));
+            result = prime * result + (int) (secs ^ (secs >>> 32));
+            return result;
+        }
+
+        @Override
+        public boolean equals(Object obj)
+        {
+            if (this == obj)
+            {
+                return true;
+            }
+            if (obj == null)
+            {
+                return false;
+            }
+            if (getClass() != obj.getClass())
+            {
+                return false;
+            }
+            final Time other = (Time) obj;
+            if (nanos != other.nanos)
+            {
+                return false;
+            }
+            if (secs != other.secs)
+            {
+                return false;
+            }
+            return true;
+        }
+
+    }
+    
+    /**
      * A class representing the Unix <code>stat</code> structure.
      */
     public static final class Stat
@@ -125,11 +242,11 @@ public final class Unix
 
         private final int gid;
 
-        private final long lastAccess;
+        private final Time lastAccess;
 
-        private final long lastModified;
+        private final Time lastModified;
 
-        private final long lastStatusChange;
+        private final Time lastStatusChange;
 
         private final long size;
 
@@ -141,6 +258,16 @@ public final class Unix
                 int uid, int gid, long lastAccess, long lastModified, long lastStatusChange,
                 long size, long numberOfBlocks, int blockSize)
         {
+            this(deviceId, inode, permissions, linkType, numberOfHardLinks, uid, gid,
+                    lastAccess, 0, lastModified, 0, lastStatusChange, 0, size, numberOfBlocks, blockSize);
+        }
+
+        Stat(long deviceId, long inode, short permissions, byte linkType, int numberOfHardLinks,
+                int uid, int gid, long lastAccess, long lastAccessNanos,
+                long lastModified, long lastModifiedNanos,
+                long lastStatusChange, long lastStatusChangeNanos,
+                long size, long numberOfBlocks, int blockSize)
+        {
             this.deviceId = deviceId;
             this.inode = inode;
             this.permissions = permissions;
@@ -148,9 +275,9 @@ public final class Unix
             this.numberOfHardLinks = numberOfHardLinks;
             this.uid = uid;
             this.gid = gid;
-            this.lastAccess = lastAccess;
-            this.lastModified = lastModified;
-            this.lastStatusChange = lastStatusChange;
+            this.lastAccess = new Time(lastAccess, lastAccessNanos);
+            this.lastModified = new Time(lastModified, lastModifiedNanos);
+            this.lastStatusChange = new Time(lastStatusChange, lastStatusChangeNanos);
             this.size = size;
             this.numberOfBlocks = numberOfBlocks;
             this.blockSize = blockSize;
@@ -161,6 +288,11 @@ public final class Unix
             this.symbolicLinkOrNull = symbolicLinkOrNull;
         }
 
+        /**
+         * Get link target of the symbolic link.
+         * 
+         * @return Symbolic link target or <code>null</code> if this is no symbolic link.
+         */
         public String tryGetSymbolicLink()
         {
             return symbolicLinkOrNull;
@@ -209,19 +341,76 @@ public final class Unix
             return gid;
         }
 
-        public long getLastAccess()
+        /**
+         * Time when file data last accessed.
+         * <p>
+         * Changed by the mknod(2), utimes(2) and read(2) system calls.
+         * 
+         * @return {@link Time} object containing seconds (to nano-second resolution) since the epoch.
+         */
+        public Time getLastAccessTime()
         {
             return lastAccess;
         }
 
-        public long getLastModified()
+        /**
+         * Time when file data last accessed.
+         * <p>
+         * Changed by the mknod(2), utimes(2) and read(2) system calls.
+         * 
+         * @return Seconds since the epoch.
+         */
+        public long getLastAccess()
+        {
+            return lastAccess.getSecs();
+        }
+
+        /**
+         * Time when file data last modified.
+         * <p>
+         * Changed by the mknod(2), utimes(2) and write(2) system calls.
+         * 
+         * @return {@link Time} object containing seconds (to nano-second resolution) since the epoch.
+         */
+        public Time getLastModifiedTime()
         {
             return lastModified;
         }
 
-        public long getLastStatusChange()
+        /**
+         * Time when file data last modified.
+         * <p>
+         * Changed by the mknod(2), utimes(2) and write(2) system calls.
+         * 
+         * @return Seconds since the epoch.
+         */
+        public long getLastModified()
+        {
+            return lastModified.getSecs();
+        }
+
+        /**
+         * Time when file status was last changed (inode data modification).
+         * <p>
+         * Changed by the chmod(2), chown(2), link(2), mknod(2), rename(2), unlink(2), utimes(2) and write(2) system calls.
+         * 
+         * @return {@link Time} object containing seconds (to nano-second resolution) since the epoch.
+         */
+        public Time getLastStatusChangeTime()
         {
             return lastStatusChange;
+        }
+
+        /**
+         * Time when file status was last changed (inode data modification).
+         * <p>
+         * Changed by the chmod(2), chown(2), link(2), mknod(2), rename(2), unlink(2), utimes(2) and write(2) system calls.
+         * 
+         * @return Seconds since the epoch.
+         */
+        public long getLastStatusChange()
+        {
+            return lastStatusChange.getSecs();
         }
 
         public long getSize()
@@ -369,7 +558,30 @@ public final class Unix
                 operation, filename, errorMessage)));
     }
 
+    private static void throwRuntimeException(String operation, String errorMessage)
+    {
+        throw new RuntimeException(String.format("Error on %s: %s", operation, errorMessage));
+    }
+
     private static native int init();
+
+    public static boolean isUseUnixRealtimeTimer()
+    {
+        return useUnixRealtimeTimer;
+    }
+
+    /**
+     * Sets whether to use the Unix realttime timer.
+     * <p>
+     * <i>Note that old versions of Linux and MacOSX do not yet support this and will terminate the Java program when 
+     * this flag is set to <code>true</code> and {@link #getSystemTime()} is called!</i>
+     * @param useUnixRealTimeTimer if <code>true</code>, the realtime timer (nano-second resolution) will be used, 
+     * otherwise the regular timer (micro-second resolution) will be used.
+     */
+    public static void setUseUnixRealtimeTimer(boolean useUnixRealTimeTimer)
+    {
+        Unix.useUnixRealtimeTimer = useUnixRealTimeTimer;
+    }
 
     private static native int getpid();
 
@@ -395,6 +607,20 @@ public final class Unix
 
     private static native int chown(String filename, int uid, int gid);
 
+    private static native int lchown(String filename, int uid, int gid);
+
+    private static native int clock_gettime(final long[] time);
+    
+    private static native int clock_gettime2(final long[] time);
+    
+    private static native int lutimes(String filename,
+            long accessTimeSecs, long accessTimeMicroSecs,
+            long modificationTimeSecs, long modificationTimeMicroSecs);
+
+    private static native int utimes(String filename,
+            long accessTimeSecs, long accessTimeMicroSecs,
+            long modificationTimeSecs, long modificationTimeMicroSecs);
+
     private static native String getuser(int uid);
 
     private static native String getgroup(int gid);
@@ -414,7 +640,7 @@ public final class Unix
     private static native String strerror(int errnum);
 
     private static native String strerror();
-
+    
     @Private
     static boolean isProcessRunningProcFS(int pid)
     {
@@ -426,8 +652,7 @@ public final class Unix
     {
         try
         {
-            return Runtime.getRuntime().exec(new String[]
-                { "ps", "-p", Integer.toString(pid) }).waitFor() == 0;
+            return Runtime.getRuntime().exec(new String[] { "ps", "-p", Integer.toString(pid) }).waitFor() == 0;
         } catch (IOException ex)
         {
             return false;
@@ -442,8 +667,8 @@ public final class Unix
     //
 
     /**
-     * Returns <code>true</code>, if the native library has been loaded successfully and the link
-     * utilities are operational, <code>false</code> otherwise.
+     * Returns <code>true</code>, if the native library has been loaded successfully and the link utilities are operational, <code>false</code>
+     * otherwise.
      */
     public static final boolean isOperational()
     {
@@ -459,9 +684,8 @@ public final class Unix
     }
 
     /**
-     * Returns the last error that occurred in this class. Use this to find out what went wrong
-     * after {@link #tryGetLinkInfo(String)} or {@link #tryGetFileInfo(String)} returned
-     * <code>null</code>.
+     * Returns the last error that occurred in this class. Use this to find out what went wrong after {@link #tryGetLinkInfo(String)} or
+     * {@link #tryGetFileInfo(String)} returned <code>null</code>.
      */
     public static String getLastError()
     {
@@ -481,9 +705,8 @@ public final class Unix
     }
 
     /**
-     * Returns <code>true</code>, if the process with <var>pid</var> is currently running and
-     * <code>false</code>, if it is not running or if process detection is not available (
-     * {@link #canDetectProcesses()} <code>== false</code>).
+     * Returns <code>true</code>, if the process with <var>pid</var> is currently running and <code>false</code>, if it is not running or if process
+     * detection is not available ( {@link #canDetectProcesses()} <code>== false</code>).
      */
     public static boolean isProcessRunning(int pid)
     {
@@ -531,14 +754,45 @@ public final class Unix
     }
 
     //
+    // Time functions
+    //
+
+    /**
+     * Gets the current system time.
+     * 
+     * @return the system time as <i>seconds since the epoch</i> and, in addition, 
+     *         nano-seconds since the current second.
+     */
+    public static final Time getSystemTime()
+    {
+        final long[] time = new long[2];
+        final int result = useUnixRealtimeTimer ? clock_gettime(time) : clock_gettime2(time);
+        if (result < 0)
+        {
+            throwRuntimeException("get system time", strerror(result));
+        }
+        return new Time(time[0], time[1]);
+    }
+    
+    /**
+     * Gets the current system time.
+     * 
+     * @return the system time as <i>milli-seconds since the epoch</i>.
+     */
+    public static final long getSystemTimeMillis()
+    {
+        return getSystemTime().getMillis();
+    }
+    
+    //
     // File functions
     //
 
     /**
      * Creates a hard link <var>linkName</var> that points to <var>fileName</var>.
      * 
-     * @throws IOExceptionUnchecked If the underlying system call fails, e.g. because
-     *             <var>linkName</var> already exists or <var>fileName</var> does not exist.
+     * @throws IOExceptionUnchecked If the underlying system call fails, e.g. because <var>linkName</var> already exists or <var>fileName</var> does
+     *             not exist.
      */
     public static final void createHardLink(String fileName, String linkName)
             throws IOExceptionUnchecked
@@ -561,8 +815,7 @@ public final class Unix
     /**
      * Creates a symbolic link <var>linkName</var> that points to <var>fileName</var>.
      * 
-     * @throws IOExceptionUnchecked If the underlying system call fails, e.g. because
-     *             <var>linkName</var> already exists.
+     * @throws IOExceptionUnchecked If the underlying system call fails, e.g. because <var>linkName</var> already exists.
      */
     public static final void createSymbolicLink(String fileName, String linkName)
             throws IOExceptionUnchecked
@@ -629,45 +882,45 @@ public final class Unix
     }
 
     /**
-     * Returns the inode for the <var>fileName</var>.
+     * Returns the inode for the <var>fileName</var>. Does not dereference a symbolic link. 
      * 
-     * @throws IOExceptionUnchecked If the information could not be obtained, e.g. because the link
-     *             does not exist.
+     * @throws IOExceptionUnchecked If the information could not be obtained, e.g. because the link does not exist.
+     * 
+     * @deprecated Use {{@link #getLStat(String)#getInode(String)} instead.
      */
-    public static final long getInode(String fileName) throws IOExceptionUnchecked
+    @Deprecated
+    public static final long getInode(String linkName) throws IOExceptionUnchecked
     {
-        return getLStat(fileName).getInode();
+        return getLStat(linkName).getInode();
     }
 
     /**
-     * Returns the number of hard links for the <var>fileName</var>.
+     * Returns the number of hard links for the <var>linkName</var>. Does not dereference a symbolic link.
      * 
-     * @throws IOExceptionUnchecked If the information could not be obtained, e.g. because the link
-     *             does not exist.
+     * @throws IOExceptionUnchecked If the information could not be obtained, e.g. because the link does not exist.
+     * 
+     * @deprecated Use {{@link #getLStat(String)#getNumberOfHardLinks(String)} instead.
      */
-    public static final int getNumberOfHardLinks(String fileName) throws IOExceptionUnchecked
+    @Deprecated
+    public static final int getNumberOfHardLinks(String linkName) throws IOExceptionUnchecked
     {
-        return getLStat(fileName).getNumberOfHardLinks();
+        return getLStat(linkName).getNumberOfHardLinks();
     }
 
     /**
-     * Returns <code>true</code> if <var>fileName</var> is a symbolic link and <code>false</code>
-     * otherwise.
+     * Returns <code>true</code> if <var>linkName</var> is a symbolic link and <code>false</code> otherwise.
      * 
-     * @throws IOExceptionUnchecked If the information could not be obtained, e.g. because the link
-     *             does not exist.
+     * @throws IOExceptionUnchecked If the information could not be obtained, e.g. because the link does not exist.
      */
-    public static final boolean isSymbolicLink(String fileName) throws IOExceptionUnchecked
+    public static final boolean isSymbolicLink(String linkName) throws IOExceptionUnchecked
     {
-        return getLStat(fileName).isSymbolicLink();
+        return getLStat(linkName).isSymbolicLink();
     }
 
     /**
-     * Returns the value of the symbolik link <var>linkName</var>, or <code>null</code>, if
-     * <var>linkName</var> is not a symbolic link.
+     * Returns the value of the symbolik link <var>linkName</var>, or <code>null</code>, if <var>linkName</var> is not a symbolic link.
      * 
-     * @throws IOExceptionUnchecked If the information could not be obtained, e.g. because the link
-     *             does not exist.
+     * @throws IOExceptionUnchecked If the information could not be obtained, e.g. because the link does not exist.
      */
     public static final String tryReadSymbolicLink(String linkName) throws IOExceptionUnchecked
     {
@@ -678,8 +931,7 @@ public final class Unix
     /**
      * Returns the information about <var>fileName</var>.
      * 
-     * @throws IOExceptionUnchecked If the information could not be obtained, e.g. because the file
-     *             does not exist.
+     * @throws IOExceptionUnchecked If the information could not be obtained, e.g. because the file does not exist.
      */
     public static final Stat getFileInfo(String fileName) throws IOExceptionUnchecked
     {
@@ -687,9 +939,8 @@ public final class Unix
     }
 
     /**
-     * Returns the information about <var>fileName</var>, or {@link NullPointerException}, if the
-     * information could not be obtained, e.g. because the file does not exist (call
-     * {@link #getLastError()} to find out what went wrong).
+     * Returns the information about <var>fileName</var>, or {@link NullPointerException}, if the information could not be obtained, e.g. because the
+     * file does not exist (call {@link #getLastError()} to find out what went wrong).
      */
     public static final Stat tryGetFileInfo(String fileName) throws IOExceptionUnchecked
     {
@@ -699,8 +950,7 @@ public final class Unix
     /**
      * Returns the information about <var>linkName</var>.
      * 
-     * @throws IOExceptionUnchecked If the information could not be obtained, e.g. because the link
-     *             does not exist.
+     * @throws IOExceptionUnchecked If the information could not be obtained, e.g. because the link does not exist.
      */
     public static final Stat getLinkInfo(String linkName) throws IOExceptionUnchecked
     {
@@ -708,12 +958,10 @@ public final class Unix
     }
 
     /**
-     * Returns the information about <var>linkName</var>. If
-     * <code>readSymbolicLinkTarget == true</code>, then the symbolic link target is read when
+     * Returns the information about <var>linkName</var>. If <code>readSymbolicLinkTarget == true</code>, then the symbolic link target is read when
      * <var>linkName</var> is a symbolic link.
      * 
-     * @throws IOExceptionUnchecked If the information could not be obtained, e.g. because the link
-     *             does not exist.
+     * @throws IOExceptionUnchecked If the information could not be obtained, e.g. because the link does not exist.
      */
     public static final Stat getLinkInfo(String linkName, boolean readSymbolicLinkTarget)
             throws IOExceptionUnchecked
@@ -727,9 +975,8 @@ public final class Unix
     }
 
     /**
-     * Returns the information about <var>linkName</var>, or {@link NullPointerException}, if the
-     * information could not be obtained, e.g. because the link does not exist (call
-     * {@link #getLastError()} to find out what went wrong).
+     * Returns the information about <var>linkName</var>, or {@link NullPointerException}, if the information could not be obtained, e.g. because the
+     * link does not exist (call {@link #getLastError()} to find out what went wrong).
      */
     public static final Stat tryGetLinkInfo(String linkName) throws IOExceptionUnchecked
     {
@@ -737,10 +984,9 @@ public final class Unix
     }
 
     /**
-     * Returns the information about <var>linkName</var>, or <code>null</code> if the information
-     * can not be obtained, e.g. because the link does not exist (call {@link #getLastError()} to
-     * find out what went wrong). If <code>readSymbolicLinkTarget == true</code>, then the symbolic
-     * link target is read when <var>linkName</var> is a symbolic link.
+     * Returns the information about <var>linkName</var>, or <code>null</code> if the information can not be obtained, e.g. because the link does not
+     * exist (call {@link #getLastError()} to find out what went wrong). If <code>readSymbolicLinkTarget == true</code>, then the symbolic link target
+     * is read when <var>linkName</var> is a symbolic link.
      */
     public static final Stat tryGetLinkInfo(String linkName, boolean readSymbolicLinkTarget)
             throws IOExceptionUnchecked
@@ -759,6 +1005,7 @@ public final class Unix
 
     /**
      * Sets the access mode of <var>filename</var> to the specified <var>mode</var> value.
+     * Dereferences a symbolic link.
      */
     public static final void setAccessMode(String fileName, short mode) throws IOExceptionUnchecked
     {
@@ -774,8 +1021,8 @@ public final class Unix
     }
 
     /**
-     * Sets the owner of <var>filename</var> to the specified <var>uid</var> and <var>gid</var>
-     * values.
+     * Sets the owner of <var>fileName</var> to the specified <var>uid</var> and <var>gid</var> values. 
+     * Dereferences a symbolic link.
      */
     public static final void setOwner(String fileName, int uid, int gid)
             throws IOExceptionUnchecked
@@ -788,6 +1035,190 @@ public final class Unix
         if (result < 0)
         {
             throwFileException("set owner", fileName, strerror(result));
+        }
+    }
+
+    /**
+     * Sets the owner of <var>fileName</var> to the <var>uid</var> and <var>gid</var> of the specified <code>user</code>. 
+     * Dereferences a symbolic link.
+     */
+    public static final void setOwner(String fileName, Password user)
+            throws IOExceptionUnchecked
+    {
+        if (fileName == null)
+        {
+            throw new NullPointerException("fileName");
+        }
+        final int result = chown(fileName, user.getUid(), user.getGid());
+        if (result < 0)
+        {
+            throwFileException("set owner", fileName, strerror(result));
+        }
+    }
+
+    /**
+     * Sets the owner of <var>linkName</var> to the specified <var>uid</var> and <var>gid</var> values. 
+     * Does not dereference a symbolic link.
+     */
+    public static final void setLinkOwner(String linkName, int uid, int gid)
+            throws IOExceptionUnchecked
+    {
+        if (linkName == null)
+        {
+            throw new NullPointerException("linkName");
+        }
+        final int result = lchown(linkName, uid, gid);
+        if (result < 0)
+        {
+            throwFileException("set link owner", linkName, strerror(result));
+        }
+    }
+
+    /**
+     * Sets the owner of <var>linkName</var> to the <var>uid</var> and <var>gid</var> of the specified <code>user</code>. 
+     * Does not dereference a symbolic link.
+     */
+    public static final void setLinkOwner(String linkName, Password user)
+            throws IOExceptionUnchecked
+    {
+        if (linkName == null)
+        {
+            throw new NullPointerException("linkName");
+        }
+        final int result = lchown(linkName, user.getUid(), user.getGid());
+        if (result < 0)
+        {
+            throwFileException("set owner", linkName, strerror(result));
+        }
+    }
+
+    /**
+     * Change link timestamps of a file, directory or link. Does not dereference a symbolic link.
+     * 
+     * @param fileName The name of the file or link to change the timestamp of.
+     * @param accessTimeSecs The new access time in seconds since start of the epoch.
+     * @param accessTimeMicroSecs The micro-second part of the new access time.
+     * @param modificationTimeSecs The new modification time in seconds since start of the epoch.
+     * @param modificationTimeMicroSecs The micro-second part of the new modification time.
+     */
+    public static void setLinkTimestamps(String fileName,
+            long accessTimeSecs, long accessTimeMicroSecs,
+            long modificationTimeSecs, long modificationTimeMicroSecs) throws IOExceptionUnchecked
+    {
+        final int result = lutimes(fileName, accessTimeSecs, accessTimeMicroSecs,
+                            modificationTimeSecs, modificationTimeMicroSecs);
+        if (result < 0)
+        {
+            throwFileException("set file timestamps", fileName, strerror(result));
+        }
+    }
+
+    /**
+     * Change file timestamps of a file, directory or link. Does not dereference a symbolic link.
+     * 
+     * @param fileName The name of the file or link to change the timestamp of.
+     * @param accessTimeSecs The new access time in seconds since start of the epoch.
+     * @param modificationTimeSecs The new modification time in seconds since start of the epoch.
+     * @param followLink If set to <code>true</code>, set the time stamps of the link target, 
+     *          otherwise set the time stamps of the link. 
+     */
+    public static void setLinkTimestamps(String fileName,
+            long accessTimeSecs, long modificationTimeSecs) throws IOExceptionUnchecked
+    {
+        setLinkTimestamps(fileName, accessTimeSecs, 0, modificationTimeSecs, 0);
+    }
+
+    /**
+     * Change file timestamps of a file, directory or link. Does not dereference a symbolic link.
+     * 
+     * @param fileName The name of the file or link to change the timestamp of.
+     * @param accessTime The new access time as {@link Time} object.
+     * @param modificationTime The new modification time as {@link Time} object.
+     */
+    public static void setLinkTimestamps(String fileName,
+            Time accessTime, Time modificationTime) throws IOExceptionUnchecked
+    {
+        setLinkTimestamps(fileName, accessTime.getSecs(), accessTime.getMicroSecPart(), 
+                modificationTime.getSecs(), modificationTime.getMicroSecPart());
+    }
+
+    /**
+     * Change file timestamps of a file, directory or link to the current time. Does not dereference a symbolic link.
+     * 
+     * @param fileName The name of the file or link to change the timestamp of.
+     */
+    public static void setLinkTimestamps(String fileName) throws IOExceptionUnchecked
+    {
+        final Time now = getSystemTime();
+        final int result = lutimes(fileName, now.getSecs(), now.getMicroSecPart(), now.getSecs(), now.getMicroSecPart());
+        if (result < 0)
+        {
+            throwFileException("set file timestamps", fileName, strerror(result));
+        }
+    }
+
+    /**
+     * Change file timestamps of a file, directory or link. Dereferences a symbolic link.
+     * 
+     * @param fileName The name of the file or link to change the timestamp of.
+     * @param accessTimeSecs The new access time in seconds since start of the epoch.
+     * @param accessTimeMicroSecs The micro-second part of the new access time.
+     * @param modificationTimeSecs The new modification time in seconds since start of the epoch.
+     * @param modificationTimeMicroSecs The micro-second part of the new modification time.
+     */
+    public static void setFileTimestamps(String fileName,
+            long accessTimeSecs, long accessTimeMicroSecs,
+            long modificationTimeSecs, long modificationTimeMicroSecs) throws IOExceptionUnchecked
+    {
+        final int result = utimes(fileName, accessTimeSecs, accessTimeMicroSecs,
+                            modificationTimeSecs, modificationTimeMicroSecs);
+        if (result < 0)
+        {
+            throwFileException("set file timestamps", fileName, strerror(result));
+        }
+    }
+
+    /**
+     * Change file timestamps of a file, directory or link. Does not dereference a symbolic link.
+     * 
+     * @param fileName The name of the file or link to change the timestamp of.
+     * @param accessTimeSecs The new access time in seconds since start of the epoch.
+     * @param modificationTimeSecs The new modification time in seconds since start of the epoch.
+     */
+    public static void setFileTimestamps(String fileName,
+            long accessTimeSecs, long modificationTimeSecs) throws IOExceptionUnchecked
+    {
+        setFileTimestamps(fileName, accessTimeSecs, 0, modificationTimeSecs, 0);
+    }
+
+    /**
+     * Change file timestamps of a file, directory or link. Does not dereference a symbolic link.
+     * 
+     * @param fileName The name of the file or link to change the timestamp of.
+     * @param accessTime The new access time as {@link Time} object.
+     * @param modificationTime The new modification time as {@link Time} object.
+     * @param followLink If set to <code>true</code>, set the time stamps of the link target, 
+     *          otherwise set the time stamps of the link. 
+     */
+    public static void setFileTimestamps(String fileName,
+            Time accessTime, Time modificationTime) throws IOExceptionUnchecked
+    {
+        setFileTimestamps(fileName, accessTime.getSecs(), accessTime.getMicroSecPart(), 
+                modificationTime.getSecs(), modificationTime.getMicroSecPart());
+    }
+
+    /**
+     * Change file timestamps of a file, directory or link to the current time. Does not dereference a symbolic link.
+     * 
+     * @param fileName The name of the file or link to change the timestamp of.
+     */
+    public static void setFileTimestamps(String fileName) throws IOExceptionUnchecked
+    {
+        final Time now = getSystemTime();
+        final int result = utimes(fileName, now.getSecs(), now.getMicroSecPart(), now.getSecs(), now.getMicroSecPart());
+        if (result < 0)
+        {
+            throwFileException("set file timestamps", fileName, strerror(result));
         }
     }
 
@@ -804,8 +1235,7 @@ public final class Unix
     }
 
     /**
-     * Returns the uid of the <var>userName</var>, or <code>-1</code>, if no user with this name
-     * exists.
+     * Returns the uid of the <var>userName</var>, or <code>-1</code>, if no user with this name exists.
      */
     public static final int getUidForUserName(String userName)
     {
@@ -817,8 +1247,7 @@ public final class Unix
     }
 
     /**
-     * Returns the {@link Password} for the given <var>userName</var>, or <code>null</code>, if no
-     * user with that name exists.
+     * Returns the {@link Password} for the given <var>userName</var>, or <code>null</code>, if no user with that name exists.
      */
     public static final Password tryGetUserByName(String userName)
     {
@@ -830,8 +1259,7 @@ public final class Unix
     }
 
     /**
-     * Returns the {@link Password} for the given <var>userName</var>, or <code>null</code>, if no
-     * user with that name exists.
+     * Returns the {@link Password} for the given <var>userName</var>, or <code>null</code>, if no user with that name exists.
      */
     public static final Password tryGetUserByUid(int uid)
     {
@@ -843,8 +1271,7 @@ public final class Unix
     //
 
     /**
-     * Returns the name of the group identified by <var>gid</var>, or <code>null</code>, if no group
-     * with that <var>gid</var> exists.
+     * Returns the name of the group identified by <var>gid</var>, or <code>null</code>, if no group with that <var>gid</var> exists.
      */
     public static final String tryGetGroupNameForGid(int gid)
     {
@@ -852,8 +1279,7 @@ public final class Unix
     }
 
     /**
-     * Returns the gid of the <var>groupName</var>, or <code>-1</code>, if no group with this name
-     * exists.
+     * Returns the gid of the <var>groupName</var>, or <code>-1</code>, if no group with this name exists.
      */
     public static final int getGidForGroupName(String groupName)
     {
@@ -865,8 +1291,7 @@ public final class Unix
     }
 
     /**
-     * Returns the {@link Group} for the given <var>groupName</var>, or <code>null</code>, if no
-     * group with that name exists.
+     * Returns the {@link Group} for the given <var>groupName</var>, or <code>null</code>, if no group with that name exists.
      */
     public static final Group tryGetGroupByName(String groupName)
     {
@@ -878,8 +1303,7 @@ public final class Unix
     }
 
     /**
-     * Returns the {@link Group} for the given <var>gid</var>, or <code>null</code>, if no group
-     * with that gid exists.
+     * Returns the {@link Group} for the given <var>gid</var>, or <code>null</code>, if no group with that gid exists.
      */
     public static final Group tryGetGroupByGid(int gid)
     {

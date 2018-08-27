@@ -13,6 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+#include <time.h>
 #include <unistd.h>
 #include <errno.h>
 #include <string.h>
@@ -20,6 +21,7 @@
 #include <grp.h>
 #include <sys/types.h>
 #include <sys/stat.h>
+#include <sys/time.h>
 #include <jni.h>
 
 /* Types of links. Keep in sync with Java enum. */
@@ -27,6 +29,17 @@
 #define DIRECTORY 1
 #define SYMLINK 2
 #define OTHER 3
+
+/* Field name for nano second precission of file stat times. */
+#ifdef __MACH__
+#define ST_ATIME_NANO st_atimespec.tv_nsec
+#define ST_MTIME_NANO st_mtimespec.tv_nsec
+#define ST_CTIME_NANO st_ctimespec.tv_nsec
+#else
+#define ST_ATIME_NANO st_atim.tv_nsec
+#define ST_MTIME_NANO st_mtim.tv_nsec
+#define ST_CTIME_NANO st_ctim.tv_nsec
+#endif
 
 #ifndef __STAT
 #define __STAT stat
@@ -44,6 +57,82 @@ jclass groupClass;
 jmethodID groupConstructorID;
 jclass statClass;
 jmethodID statConstructorID;
+jboolean statConstructorHasNanos;
+
+/* 
+ * Error and Exception Handling 
+ */
+ 
+#define THROWEXCEPTION(className,args) {                                    \
+    jclass     jc;                                                          \
+    jmethodID  jm;                                                          \
+    jobject    ex;                                                          \
+    jc = (*env)->FindClass(env, (className));                               \
+    if (jc == NULL) {                                                       \
+        return JNI_FALSE;                                                   \
+    }                                                                       \
+    jm = (*env)->GetMethodID(env, jc, "<init>", "(Ljava/lang/String;)V");   \
+    if (jm == NULL) {                                                       \
+        printf("THROWEXCEPTION FATAL ERROR: GetMethodID failed\n");         \
+        return JNI_FALSE;                                                   \
+    }                                                                       \
+    ex = (*env)->NewObjectA (env, jc, jm, (jvalue*)(args));                 \
+    if (ex == NULL) {                                                       \
+        printf("THROWEXCEPTION FATAL ERROR:  %s: Creation failed\n", (className)); \
+        return JNI_FALSE;                                                   \
+    }                                                                       \
+    if ((*env)->Throw(env, (jthrowable)ex) < 0) {                           \
+        printf("THROWEXCEPTION FATAL ERROR:  %s: Throw failed\n", (className));    \
+        return JNI_FALSE;                                                   \
+    }                                                                       \
+    return JNI_TRUE;                                                        \
+}
+
+/*
+ *  Routine to raise particular Java exceptions from C
+ */
+static jboolean
+jni_error_class
+    (JNIEnv *env, const char *message, const char *className)
+{
+    char *args[2];
+    jstring str = (*env)->NewStringUTF(env, message);
+    args[0] = (char *)str;
+    args[1] = 0;
+
+    THROWEXCEPTION(className, args);
+} /* end jni_error_class() */
+
+/*
+ *  A NULL argument in an HDF5 call
+ *  Create and throw an 'NullPointerException'
+ *
+ *  Note:  This routine never returns from the 'throw',
+ *  and the Java native method immediately raises the
+ *  exception.
+ */
+jboolean null_pointer_exception(JNIEnv *env, const char *functName)
+{
+    return jni_error_class(env, functName, "java/lang/NullPointerException");
+} /* end null_pointer_exception() */
+
+/*
+ *  A fatal error in a JNI call
+ *  Create and throw an 'InternalError'
+ *
+ *  Note:  This routine never returns from the 'throw',
+ *  and the Java native method immediately raises the
+ *  exception.
+ */
+jboolean internal_error(JNIEnv *env, const char *functName)
+{
+    return jni_error_class(env, functName, "java/lang/InternalError");
+} /* end iternal_error() */
+
+
+/*
+ * End Error and Exception Handling 
+ */
 
 JNIEXPORT jint JNICALL Java_ch_systemsx_cisd_base_unix_Unix_init
   (JNIEnv *env, jclass clss)
@@ -82,11 +171,18 @@ JNIEXPORT jint JNICALL Java_ch_systemsx_cisd_base_unix_Unix_init
         return -1;
     }
     statClass = (*env)->NewGlobalRef(env, statClass);
-    statConstructorID = (*env)->GetMethodID(env, statClass, "<init>", "(JJSBIIIJJJJJI)V");
-    if (groupConstructorID == NULL) /* Really shouldn't happen, will throw NoSuchMethodError. */
+    statConstructorHasNanos = JNI_TRUE;
+    statConstructorID = (*env)->GetMethodID(env, statClass, "<init>", "(JJSBIIIJJJJJJJJI)V");
+    if (statConstructorID == NULL) /* We have an old Java class without the "microsecond constructor". */
     {
-        return -1;
-    }
+        (*env)->ExceptionClear(env);
+	    statConstructorHasNanos = JNI_FALSE;
+	    statConstructorID = (*env)->GetMethodID(env, statClass, "<init>", "(JJSBIIIJJJJJI)V");
+	    if (statConstructorID == NULL) /* Really shouldn't happen, will throw NoSuchMethodError. */
+	    {
+	        return -1;
+	    }
+	}
     return 0;
 }
 
@@ -165,10 +261,20 @@ jobject call_stat(JNIEnv *env, jclass clss, jstring filename, stat_func_ptr stat
         {
             type = OTHER;
         }
-        result = (*env)->NewObject(env, statClass, statConstructorID, (jlong) s.st_dev, (jlong) s.st_ino, 
-                   (jshort) (s.st_mode & 07777), (jbyte) type, (jint) s.st_nlink, 
-                   (jint) s.st_uid, (jint) s.st_gid, (jlong) s.st_atime, (jlong) s.st_mtime, 
-                   (jlong) s.st_ctime, (jlong) s.st_size, (jlong) s.st_blocks, (jint) s.st_blksize);
+        if (statConstructorHasNanos)
+        {
+            result = (*env)->NewObject(env, statClass, statConstructorID, (jlong) s.st_dev, (jlong) s.st_ino, 
+                       (jshort) (s.st_mode & 07777), (jbyte) type, (jint) s.st_nlink, 
+                       (jint) s.st_uid, (jint) s.st_gid, (jlong) s.st_atime, (jlong) s.ST_ATIME_NANO, 
+                       (jlong) s.st_mtime, (jlong) s.ST_MTIME_NANO, (jlong) s.st_ctime, (jlong) s.ST_CTIME_NANO, 
+                       (jlong) s.st_size, (jlong) s.st_blocks, (jint) s.st_blksize);
+        } else
+        {
+            result = (*env)->NewObject(env, statClass, statConstructorID, (jlong) s.st_dev, (jlong) s.st_ino, 
+                       (jshort) (s.st_mode & 07777), (jbyte) type, (jint) s.st_nlink, 
+                       (jint) s.st_uid, (jint) s.st_gid, (jlong) s.st_atime, (jlong) s.st_mtime, 
+                       (jlong) s.st_ctime, (jlong) s.st_size, (jlong) s.st_blocks, (jint) s.st_blksize);
+        }
         return result;
     }
 }
@@ -226,6 +332,23 @@ JNIEXPORT jint JNICALL Java_ch_systemsx_cisd_base_unix_Unix_chown(JNIEnv *env, j
 	
     plinkname = (char *)(*env)->GetStringUTFChars(env, linkname, NULL);
     retval = chown(plinkname, uid, gid);
+    (*env)->ReleaseStringUTFChars(env, linkname, plinkname);
+    if (retval < 0)
+    {
+		    return -errno;
+    } else
+    {
+        return 0;
+    }
+}
+
+JNIEXPORT jint JNICALL Java_ch_systemsx_cisd_base_unix_Unix_lchown(JNIEnv *env, jclass clss, jstring linkname, jint uid, jint gid)
+{
+    const char* plinkname;
+    int retval;
+	
+    plinkname = (char *)(*env)->GetStringUTFChars(env, linkname, NULL);
+    retval = lchown(plinkname, uid, gid);
     (*env)->ReleaseStringUTFChars(env, linkname, plinkname);
     if (retval < 0)
     {
@@ -443,4 +566,134 @@ JNIEXPORT jstring JNICALL Java_ch_systemsx_cisd_base_unix_Unix_strerror__I(JNIEn
 JNIEXPORT jstring JNICALL Java_ch_systemsx_cisd_base_unix_Unix_strerror__(JNIEnv *env, jclass clss)
 {
     return (*env)->NewStringUTF(env, strerror(errno));
+}
+
+JNIEXPORT jint JNICALL Java_ch_systemsx_cisd_base_unix_Unix_lutimes
+  (JNIEnv *env, jclass clss, jstring filename, jlong accessTimeSecs, jlong accessTimeMicroSecs, jlong modificationTimeSecs, jlong modificationTimeMicroSecs)
+{
+    const char* pfilename;
+    struct timeval times[2];
+    int retval;
+
+    pfilename = (char *)(*env)->GetStringUTFChars(env, filename, NULL);
+    times[0].tv_sec = accessTimeSecs;
+    times[0].tv_usec = accessTimeMicroSecs;
+    times[1].tv_sec = modificationTimeSecs;
+    times[1].tv_usec = modificationTimeMicroSecs;
+
+    retval = lutimes(pfilename, times);
+    if (retval < 0)
+    {
+        retval = -errno;
+    }
+
+    (*env)->ReleaseStringUTFChars(env, filename, pfilename);
+
+   return retval;
+}
+
+JNIEXPORT jint JNICALL Java_ch_systemsx_cisd_base_unix_Unix_utimes
+  (JNIEnv *env, jclass clss, jstring filename, jlong accessTimeSecs, jlong accessTimeMicroSecs, jlong modificationTimeSecs, jlong modificationTimeMicroSecs)
+{
+    const char* pfilename;
+    struct timeval times[2];
+    int retval;
+
+    pfilename = (char *)(*env)->GetStringUTFChars(env, filename, NULL);
+    times[0].tv_sec = accessTimeSecs;
+    times[0].tv_usec = accessTimeMicroSecs;
+    times[1].tv_sec = modificationTimeSecs;
+    times[1].tv_usec = modificationTimeMicroSecs;
+
+    retval = utimes(pfilename, times);
+    if (retval < 0)
+    {
+        retval = -errno;
+    }
+
+    (*env)->ReleaseStringUTFChars(env, filename, pfilename);
+
+   return retval;
+}
+
+JNIEXPORT jint JNICALL Java_ch_systemsx_cisd_base_unix_Unix_clock_1gettime
+  (JNIEnv *env, jclass clss, jlongArray time)
+{
+    struct timespec spec;
+    jlong   *timeP;
+    jboolean isCopy;
+    int retval;
+    
+    if (time == NULL) 
+    {
+        null_pointer_exception(env, "clock_gettime: time is NULL");
+    } /* end if */
+    timeP = (jlong*)(*env)->GetPrimitiveArrayCritical(env, time, &isCopy);
+    if (timeP == NULL) 
+    {
+        internal_error(env, "clock_gettime: time not pinned");
+    } /* end if */
+
+
+    retval = clock_gettime(CLOCK_REALTIME, &spec);
+    if (retval < 0)
+    {
+        retval = -errno;
+    } else
+    {
+	    timeP[0] = spec.tv_sec;
+	    timeP[1] = spec.tv_nsec;
+	}
+
+    (*env)->ReleasePrimitiveArrayCritical(env, time, timeP, 0);    
+    
+    return retval;
+}
+
+int clock_gettime2(int clk_id, struct timespec* t) {
+    struct timeval now;
+    
+    int rv = gettimeofday(&now, NULL);
+    if (rv) 
+    {
+        return rv;
+    }
+    t->tv_sec  = now.tv_sec;
+    t->tv_nsec = now.tv_usec * 1000;
+    
+    return 0;
+}
+
+JNIEXPORT jint JNICALL Java_ch_systemsx_cisd_base_unix_Unix_clock_1gettime2
+  (JNIEnv *env, jclass clss, jlongArray time)
+{
+    struct timespec spec;
+    jlong   *timeP;
+    jboolean isCopy;
+    int retval;
+    
+    if (time == NULL) 
+    {
+        null_pointer_exception(env, "clock_gettime: time is NULL");
+    } /* end if */
+    timeP = (jlong*)(*env)->GetPrimitiveArrayCritical(env, time, &isCopy);
+    if (timeP == NULL) 
+    {
+        internal_error(env, "clock_gettime: time not pinned");
+    } /* end if */
+
+
+    retval = clock_gettime2(CLOCK_REALTIME, &spec);
+    if (retval < 0)
+    {
+        retval = -errno;
+    } else
+    {
+	    timeP[0] = spec.tv_sec;
+	    timeP[1] = spec.tv_nsec;
+	}
+
+    (*env)->ReleasePrimitiveArrayCritical(env, time, timeP, 0);    
+    
+    return retval;
 }

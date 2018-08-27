@@ -16,6 +16,8 @@
 
 package ch.systemsx.cisd.base.unix;
 
+import static org.testng.Assert.assertNotEquals;
+
 import java.io.File;
 import java.io.IOException;
 import java.lang.reflect.InvocationTargetException;
@@ -40,6 +42,15 @@ import ch.systemsx.cisd.base.unix.Unix.Stat;
 @Friend(toClasses = Unix.class)
 public class UnixTests extends AbstractFileSystemTestCase
 {
+    private UnixTests()
+    {
+        super();
+    }
+
+    private UnixTests(boolean cleanAfterMethod)
+    {
+        super(cleanAfterMethod);
+    }
 
     @Test(groups =
         { "requires_unix" })
@@ -107,6 +118,124 @@ public class UnixTests extends AbstractFileSystemTestCase
 
     @Test(groups =
         { "requires_unix" })
+    public void testTouchSymLinkAndFileRealtimeTimer() throws IOException, InterruptedException
+    {
+        if (BuildAndEnvironmentInfo.INSTANCE.getOS().contains("2.6.32"))
+        {
+            System.out.println("  ...skipping as CentOS6 does not yet support the realtime timer.");
+            return;
+        }
+        Unix.setUseUnixRealtimeTimer(true);
+        final File f = new File(workingDirectory, "someOtherFile");
+        final String content = "someMoreText\n";
+        FileUtils.writeStringToFile(f, content, Charset.defaultCharset());
+        final File s = new File(workingDirectory, "someLink");
+        Unix.createSymbolicLink(f.getAbsolutePath(), s.getAbsolutePath());
+        final Stat info = Unix.getLinkInfo(s.getAbsolutePath());
+        assertEquals(1, info.getNumberOfHardLinks());
+        assertEquals(FileLinkType.SYMLINK, info.getLinkType());
+        assertTrue(info.isSymbolicLink());
+        assertEquals(f.getAbsolutePath(), info.tryGetSymbolicLink());
+        assertEquals(f.getAbsolutePath(), Unix.tryReadSymbolicLink(s.getAbsolutePath()));
+        assertNull(Unix.getLinkInfo(s.getAbsolutePath(), false).tryGetSymbolicLink());
+        final long lastMicros = info.getLastModifiedTime().getMicroSecPart();
+        final long newLastModifiedLink = info.getLastModifiedTime().getSecs() - 24 * 3600;
+        Unix.setLinkTimestamps(s.getAbsolutePath(), newLastModifiedLink, lastMicros, newLastModifiedLink, lastMicros);
+
+        final long newLastModifiedFile = info.getLastModifiedTime().getSecs() - 2 * 24 * 3600;
+        Unix.setFileTimestamps(f.getAbsolutePath(), newLastModifiedFile, lastMicros, newLastModifiedFile, lastMicros);
+
+        final Stat info2l = Unix.getLinkInfo(s.getAbsolutePath(), false);
+        assertEquals(newLastModifiedLink, info2l.getLastModifiedTime().getSecs());
+        assertEquals(lastMicros, info2l.getLastModifiedTime().getMicroSecPart());
+        assertEquals(newLastModifiedLink, info2l.getLastAccessTime().getSecs());
+        assertEquals(lastMicros, info2l.getLastAccessTime().getMicroSecPart());
+
+        final Stat info2f = Unix.getFileInfo(s.getAbsolutePath());
+        final Stat info2f2 = Unix.getLinkInfo(f.getAbsolutePath());
+        assertNotEquals(info2l.getLastModifiedTime(), info2f2.getLastModifiedTime());
+        assertEquals(info2f2.getLastModifiedTime(), info2f.getLastModifiedTime());
+        assertEquals(newLastModifiedFile, info2f.getLastModifiedTime().getSecs());
+        assertEquals(lastMicros, info2f.getLastModifiedTime().getMicroSecPart());
+        assertEquals(newLastModifiedFile, info2f.getLastAccessTime().getSecs());
+        assertEquals(lastMicros, info2f.getLastAccessTime().getMicroSecPart());
+
+        Thread.sleep(10);
+
+        final Unix.Time now1 = Unix.getSystemTime();
+        assertNotEquals(0, now1.getNanoSecPart() % 1_000);
+        Unix.setLinkTimestamps(s.getAbsolutePath());
+        final Unix.Time now2 = Unix.getSystemTime();
+        final Stat info3 = Unix.getLinkInfo(s.getAbsolutePath());
+        
+        assertTrue(now1.getSecs() <= info3.getLastModified() && info3.getLastModified() <= now2.getSecs());
+        assertTrue(now1.getMicroSecPart() <= info3.getLastModifiedTime().getMicroSecPart() && info.getLastModifiedTime().getMilliSecPart() <= now2.getMicroSecPart());
+        assertTrue(now1.getSecs() <= info3.getLastAccess() && info3.getLastAccess() <= now2.getSecs());
+        assertTrue(now1.getMicroSecPart() <= info3.getLastAccessTime().getMicroSecPart() && info.getLastAccessTime().getMilliSecPart() <= now2.getMicroSecPart());
+        assertNotEquals(lastMicros, info3.getLastModifiedTime().getMicroSecPart());
+        assertNotEquals(lastMicros, info3.getLastAccessTime().getMicroSecPart());
+
+    }
+
+    @Test(groups =
+        { "requires_unix" })
+    public void testTouchSymLinkAndFile() throws IOException, InterruptedException
+    {
+        Unix.setUseUnixRealtimeTimer(false);
+        final File f = new File(workingDirectory, "someOtherFile");
+        final String content = "someMoreText\n";
+        FileUtils.writeStringToFile(f, content, Charset.defaultCharset());
+        final File s = new File(workingDirectory, "someLink");
+        Unix.createSymbolicLink(f.getAbsolutePath(), s.getAbsolutePath());
+        final Stat info = Unix.getLinkInfo(s.getAbsolutePath());
+        assertEquals(1, info.getNumberOfHardLinks());
+        assertEquals(FileLinkType.SYMLINK, info.getLinkType());
+        assertTrue(info.isSymbolicLink());
+        assertEquals(f.getAbsolutePath(), info.tryGetSymbolicLink());
+        assertEquals(f.getAbsolutePath(), Unix.tryReadSymbolicLink(s.getAbsolutePath()));
+        assertNull(Unix.getLinkInfo(s.getAbsolutePath(), false).tryGetSymbolicLink());
+        final long lastMicros = info.getLastModifiedTime().getMicroSecPart();
+        final long newLastModifiedLink = info.getLastModifiedTime().getSecs() - 24 * 3600;
+        Unix.setLinkTimestamps(s.getAbsolutePath(), newLastModifiedLink, lastMicros, newLastModifiedLink, lastMicros);
+
+        final long newLastModifiedFile = info.getLastModifiedTime().getSecs() - 2 * 24 * 3600;
+        Unix.setFileTimestamps(f.getAbsolutePath(), newLastModifiedFile, lastMicros, newLastModifiedFile, lastMicros);
+
+        final Stat info2l = Unix.getLinkInfo(s.getAbsolutePath(), false);
+        assertEquals(newLastModifiedLink, info2l.getLastModifiedTime().getSecs());
+        assertEquals(lastMicros, info2l.getLastModifiedTime().getMicroSecPart());
+        assertEquals(newLastModifiedLink, info2l.getLastAccessTime().getSecs());
+        assertEquals(lastMicros, info2l.getLastAccessTime().getMicroSecPart());
+
+        final Stat info2f = Unix.getFileInfo(s.getAbsolutePath());
+        final Stat info2f2 = Unix.getLinkInfo(f.getAbsolutePath());
+        assertNotEquals(info2l.getLastModifiedTime(), info2f2.getLastModifiedTime());
+        assertEquals(info2f2.getLastModifiedTime(), info2f.getLastModifiedTime());
+        assertEquals(newLastModifiedFile, info2f.getLastModifiedTime().getSecs());
+        assertEquals(lastMicros, info2f.getLastModifiedTime().getMicroSecPart());
+        assertEquals(newLastModifiedFile, info2f.getLastAccessTime().getSecs());
+        assertEquals(lastMicros, info2f.getLastAccessTime().getMicroSecPart());
+
+
+        Thread.sleep(10);
+
+        final Unix.Time now1 = Unix.getSystemTime();
+        assertEquals(0, now1.getNanoSecPart() % 1_000);
+        Unix.setLinkTimestamps(s.getAbsolutePath());
+        final Unix.Time now2 = Unix.getSystemTime();
+        final Stat info3 = Unix.getLinkInfo(s.getAbsolutePath());
+        
+        assertTrue(now1.getSecs() <= info3.getLastModified() && info3.getLastModified() <= now2.getSecs());
+        assertTrue(now1.getMicroSecPart() <= info3.getLastModifiedTime().getMicroSecPart() && info.getLastModifiedTime().getMilliSecPart() <= now2.getMicroSecPart());
+        assertTrue(now1.getSecs() <= info3.getLastAccess() && info3.getLastAccess() <= now2.getSecs());
+        assertTrue(now1.getMicroSecPart() <= info3.getLastAccessTime().getMicroSecPart() && info.getLastAccessTime().getMilliSecPart() <= now2.getMicroSecPart());
+        assertNotEquals(lastMicros, info3.getLastModifiedTime().getMicroSecPart());
+        assertNotEquals(lastMicros, info3.getLastAccessTime().getMicroSecPart());
+
+    }
+
+    @Test(groups =
+        { "requires_unix" })
     public void testGetLinkInfoSymLinkDanglingLink() throws IOException
     {
         final File s = new File(workingDirectory, "someDanglingLink");
@@ -167,14 +296,14 @@ public class UnixTests extends AbstractFileSystemTestCase
         { "requires_unix" })
     public void testGetUid()
     {
-        assertTrue(Unix.getUid() > 0);
+        assertTrue(Unix.getUid() >= 0);
     }
 
     @Test(groups =
         { "requires_unix" })
     public void testGetEuid()
     {
-        assertTrue(Unix.getEuid() > 0);
+        assertTrue(Unix.getEuid() >= 0);
         assertEquals(Unix.getUid(), Unix.getEuid());
     }
 
@@ -182,14 +311,14 @@ public class UnixTests extends AbstractFileSystemTestCase
         { "requires_unix" })
     public void testGetGid()
     {
-        assertTrue(Unix.getGid() > 0);
+        assertTrue(Unix.getGid() >= 0);
     }
 
     @Test(groups =
         { "requires_unix" })
     public void testGetEgid()
     {
-        assertTrue(Unix.getEgid() > 0);
+        assertTrue(Unix.getEgid() >= 0);
         assertEquals(Unix.getGid(), Unix.getEgid());
     }
 
@@ -309,6 +438,8 @@ public class UnixTests extends AbstractFileSystemTestCase
             System.err.println("No unix library found.");
             System.exit(1);
         }
+        boolean stopOnError = args.length > 0 && "stopOnError".equalsIgnoreCase(args[0]);
+        int failed = 0;
         final UnixTests test = new UnixTests();
         try
         {
@@ -338,14 +469,29 @@ public class UnixTests extends AbstractFileSystemTestCase
                     }
                     if (exceptionFound == false)
                     {
-                        throw th;
+                        ++failed;
+                        System.out.println("Caught exception in method " + m.getName());
+                        th.printStackTrace();
+                        if (stopOnError)
+                        {
+                            System.exit(1);
+                        }
                     }
                 }
             }
-            System.out.println("Tests OK!");
+            if (failed == 0)
+            {
+                System.out.println("Tests OK!");
+            } else
+            {   
+                System.out.printf("%d tests FAILED!\n", failed);
+            }
         } finally
         {
-            test.afterClass();
+            if (failed == 0)
+            {
+                test.afterClass();
+            }
         }
     }
 
