@@ -289,9 +289,7 @@ public final class Unix
         }
 
         /**
-         * Get link target of the symbolic link.
-         * 
-         * @return Symbolic link target or <code>null</code> if this is no symbolic link.
+         * Get link target of the symbolic link or <code>null</code>, if this is not a link or the link target has not been read.
          */
         public String tryGetSymbolicLink()
         {
@@ -303,6 +301,9 @@ public final class Unix
             return deviceId;
         }
 
+        /**
+         * Returns the inode. 
+         */
         public long getInode()
         {
             return inode;
@@ -326,6 +327,11 @@ public final class Unix
             return FileLinkType.SYMLINK == linkType;
         }
 
+        /**
+         * Returns the number of hard links for the <var>linkName</var>. Does not dereference a symbolic link.
+         * 
+         * @throws IOExceptionUnchecked If the information could not be obtained, e.g. because the link does not exist.
+         */ 
         public int getNumberOfHardLinks()
         {
             return numberOfHardLinks;
@@ -886,7 +892,7 @@ public final class Unix
      * 
      * @throws IOExceptionUnchecked If the information could not be obtained, e.g. because the link does not exist.
      * 
-     * @deprecated Use {{@link #getLStat(String)#getInode(String)} instead.
+     * @deprecated Use method {@link Stat#getInode(String)} from {@link #getLinkInfo(String)} instead.
      */
     @Deprecated
     public static final long getInode(String linkName) throws IOExceptionUnchecked
@@ -899,7 +905,7 @@ public final class Unix
      * 
      * @throws IOExceptionUnchecked If the information could not be obtained, e.g. because the link does not exist.
      * 
-     * @deprecated Use {{@link #getLStat(String)#getNumberOfHardLinks(String)} instead.
+     * @deprecated Use method {@link Stat#getNumberOfHardLinks(String)} from {@link #getLinkInfo(String)} instead.
      */
     @Deprecated
     public static final int getNumberOfHardLinks(String linkName) throws IOExceptionUnchecked
