@@ -102,7 +102,7 @@ import java.util.zip.ZipFile;
  * mandatory locks make this impossible). This is the 'auto mode' and thus the simplest way of using this utility class for the user of your
  * program.</li>
  * <li>Finally, if no appropriate structure is found in the classpath, {@link #loadNativeLibrary(String)} will fall back to the Java default method of
- * loading JNI libraries via {@link System#loadLibrary()}. This may require the Java property <code>java.library.path</code> to be set and it may
+ * loading JNI libraries via {@link System#loadLibrary(String)}. This may require the Java property <code>java.library.path</code> to be set and it may
  * require the library to follow a platform specific naming convention for the native shared library file.</li>
  * </ol>
  * 
