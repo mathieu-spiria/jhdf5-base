@@ -153,6 +153,15 @@ public final class MDDoubleArray extends MDAbstractArray<Double>
         }
     }
 
+    /**
+     * Creates an independent copy (clone) of the <var>template</var> provided.
+     */
+    public MDDoubleArray(MDDoubleArray template)
+    {
+        super(template);
+        this.flattenedArray = template.flattenedArray.clone();
+    }
+
     private static int[] getDimensions(double[][] matrix)
     {
         assert matrix != null;
@@ -371,6 +380,12 @@ public final class MDDoubleArray extends MDAbstractArray<Double>
         {
             this.size = hyperRowLength * dimensions[0];
         }
+    }
+
+    @Override
+    public MDDoubleArray clone()
+    {
+        return new MDDoubleArray(this);
     }
 
 }

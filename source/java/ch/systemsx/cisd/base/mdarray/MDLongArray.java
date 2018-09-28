@@ -153,6 +153,15 @@ public final class MDLongArray extends MDAbstractArray<Long>
         }
     }
 
+    /**
+     * Creates an independent copy (clone) of the <var>template</var> provided.
+     */
+    public MDLongArray(MDLongArray template)
+    {
+        super(template);
+        this.flattenedArray = template.flattenedArray.clone();
+    }
+
     private static int[] getDimensions(long[][] matrix)
     {
         assert matrix != null;
@@ -371,6 +380,12 @@ public final class MDLongArray extends MDAbstractArray<Long>
         {
             this.size = hyperRowLength * dimensions[0];
         }
+    }
+
+    @Override
+    public MDLongArray clone()
+    {
+        return new MDLongArray(this);
     }
 
 }

@@ -153,6 +153,15 @@ public final class MDIntArray extends MDAbstractArray<Integer>
         }
     }
 
+    /**
+     * Creates an independent copy (clone) of the <var>template</var> provided.
+     */
+    public MDIntArray(MDIntArray template)
+    {
+        super(template);
+        this.flattenedArray = template.flattenedArray.clone();
+    }
+
     private static int[] getDimensions(int[][] matrix)
     {
         assert matrix != null;
@@ -371,6 +380,12 @@ public final class MDIntArray extends MDAbstractArray<Integer>
         {
             this.size = hyperRowLength * dimensions[0];
         }
+    }
+
+    @Override
+    public MDIntArray clone()
+    {
+        return new MDIntArray(this);
     }
 
 }

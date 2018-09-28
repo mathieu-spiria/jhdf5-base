@@ -16,6 +16,7 @@
 
 package ch.systemsx.cisd.base.mdarray;
 
+import static org.testng.Assert.assertNotSame;
 import static org.testng.AssertJUnit.assertEquals;
 import static org.testng.AssertJUnit.assertTrue;
 
@@ -281,6 +282,34 @@ public class MDArrayTests
         assertEquals(4, array.size(1));
         assertEquals(7f, array.get(1, 2));
         final float[][] matrix2 = array.toMatrix();
+        assertEquals(matrix1.length, matrix2.length);
+        for (int i = 0; i < matrix1.length; ++i)
+        {
+            assertTrue(Arrays.equals(matrix1[i], matrix2[i]));
+        }
+    }
+
+    @Test
+    public void testCloneMDArray()
+    {
+        final float[][] matrix1 = new float[][]
+                {
+                    { 1f, 2f, 3f, 4f },
+                    { 5f, 6f, 7f, 8f },
+                    { 9f, 10f, 11f, 12f } };
+        final MDFloatArray array = new MDFloatArray(matrix1);
+        final MDFloatArray array2 = array.clone();
+        assertNotSame(array2.getAsFlatArray(), array.getAsFlatArray());
+        assertNotSame(array2.dimensions, array.dimensions);
+        assertEquals(array2.hyperRowLength, array.hyperRowLength);
+        assertEquals(array2.capacityHyperRows, array.capacityHyperRows);
+        assertEquals(array2.size, array.size);
+        assertEquals(2, array2.rank());
+        assertEquals(12, array2.size());
+        assertEquals(3, array2.size(0));
+        assertEquals(4, array2.size(1));
+        assertEquals(7f, array2.get(1, 2));
+        final float[][] matrix2 = array2.toMatrix();
         assertEquals(matrix1.length, matrix2.length);
         for (int i = 0; i < matrix1.length; ++i)
         {

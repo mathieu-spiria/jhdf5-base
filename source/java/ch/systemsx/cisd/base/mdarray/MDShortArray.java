@@ -153,6 +153,15 @@ public final class MDShortArray extends MDAbstractArray<Short>
         }
     }
 
+    /**
+     * Creates an independent copy (clone) of the <var>template</var> provided.
+     */
+    public MDShortArray(MDShortArray template)
+    {
+        super(template);
+        this.flattenedArray = template.flattenedArray.clone();
+    }
+
     private static int[] getDimensions(short[][] matrix)
     {
         assert matrix != null;
@@ -371,6 +380,12 @@ public final class MDShortArray extends MDAbstractArray<Short>
         {
             this.size = hyperRowLength * dimensions[0];
         }
+    }
+
+    @Override
+    public MDShortArray clone()
+    {
+        return new MDShortArray(this);
     }
 
 }

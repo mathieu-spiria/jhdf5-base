@@ -153,6 +153,15 @@ public final class MDByteArray extends MDAbstractArray<Byte>
         }
     }
 
+    /**
+     * Creates an independent copy (clone) of the <var>template</var> provided.
+     */
+    public MDByteArray(MDByteArray template)
+    {
+        super(template);
+        this.flattenedArray = template.flattenedArray.clone();
+    }
+
     private static int[] getDimensions(byte[][] matrix)
     {
         assert matrix != null;
@@ -371,6 +380,12 @@ public final class MDByteArray extends MDAbstractArray<Byte>
         {
             this.size = hyperRowLength * dimensions[0];
         }
+    }
+
+    @Override
+    public MDByteArray clone()
+    {
+        return new MDByteArray(this);
     }
 
 }

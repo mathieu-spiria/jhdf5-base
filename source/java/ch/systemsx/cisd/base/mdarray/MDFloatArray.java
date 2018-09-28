@@ -153,6 +153,15 @@ public final class MDFloatArray extends MDAbstractArray<Float>
         }
     }
 
+    /**
+     * Creates an independent copy (clone) of the <var>template</var> provided.
+     */
+    public MDFloatArray(MDFloatArray template)
+    {
+        super(template);
+        this.flattenedArray = template.flattenedArray.clone();
+    }
+
     private static int[] getDimensions(float[][] matrix)
     {
         assert matrix != null;
@@ -371,6 +380,12 @@ public final class MDFloatArray extends MDAbstractArray<Float>
         {
             this.size = hyperRowLength * dimensions[0];
         }
+    }
+
+    @Override
+    public MDFloatArray clone()
+    {
+        return new MDFloatArray(this);
     }
 
 }

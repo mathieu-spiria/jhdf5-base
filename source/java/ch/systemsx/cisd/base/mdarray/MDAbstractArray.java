@@ -105,6 +105,14 @@ public abstract class MDAbstractArray<T> implements Serializable,
         }
     }
 
+    protected MDAbstractArray(MDAbstractArray<T> template)
+    {
+        this.dimensions = template.dimensions.clone();
+        this.hyperRowLength = template.hyperRowLength;
+        this.capacityHyperRows = template.capacityHyperRows;
+        this.size = template.size;
+    }
+
     protected int computeHyperRowLength(@SuppressWarnings("hiding")
     int[] dimensions)
     {
