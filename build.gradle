@@ -1,12 +1,23 @@
+
+plugins {
+    id 'java'
+    id 'maven-publish'
+}
+
 apply from: './javaproject.gradle'
 
 group='sis'
 
+repositories {
+    mavenCentral()
+}
+
+
 dependencies {
-    compile 'apache:commons-io:+',
-            'apache:commons-lang3:+',
-            'testng:testng:+',
-            'rinn:restrictions:+'
+    compile 'commons-io:commons-io:2.6',
+            'org.apache.commons:commons-lang3:3.12.0',
+            'org.testng:testng:7.7.0',
+            'rinn:restrictions:1.0.2'
 } 
 
 tasks.withType(Test) {
@@ -112,5 +123,33 @@ publishing {
                 }
             }
         }
-  }
+
+        mavenJava(MavenPublication) {
+            from components.java
+            groupId = 'cisd'
+            artifactId = 'base'
+            version = '18.09.0'
+            pom.withXml {
+                def dependenciesNode = asNode().getAt('dependencies')[0]
+                def excludedDependencies = dependenciesNode.children().findAll {
+                    it.groupId.text() == 'org.testng' && it.artifactId.text() == 'testng'
+                }
+                excludedDependencies.each { excludedDependency ->
+                    dependenciesNode.remove(excludedDependency)
+                }
+            }
+            artifacts {
+                afterEvaluate {
+                    jar {
+                        classifier = null
+                        from sourceSets.main.output
+                    }
+                    javadocJar {
+                        classifier = 'javadoc'
+                        from javadoc.destinationDir
+                    }
+                }
+            }
+        }
+    }
 }
